@@ -1,29 +1,27 @@
-<img width="350" height="293" alt="image" src="https://github.com/user-attachments/assets/78521393-f75b-4f96-94cf-ea8478c4364f" /> <img width="350" height="293" alt="image" src="https://github.com/user-attachments/assets/7e0a98c5-2fe1-404c-b80a-e43ff39dec3b" />
+# Last-Letter Helper
 
+Een compacte overlay die helpt bij het bekende "laatste letter"-woordspel. De tool kijkt naar de laatste letter van het vorige ingezonden woord en stelt meerdere korte suggesties voor die met die letter beginnen. De overlay blijft altijd bovenaan, kan met de muis versleept worden en werkt zowel met het meegeleverde `words_alpha.txt` bestand als met een externe systeem-woordenlijst.
 
+## Belangrijkste functies
+- **Laatste letter als input**: na het indienen van een woord wordt de laatste letter automatisch opgeslagen voor de volgende ronde.
+- **Slimme suggesties**: altijd tot vijf opties die beginnen met de juiste letter, geordend van kort naar lang en zeldzame letters laag in de lijst. Reeds gebruikte woorden worden overgeslagen.
+- **Live feedback**: toont wat je typt, markeert prefix- en binnenwoordmatches met kleur, en laat de volgende letter van de beste suggestie zien.
+- **Waarschuwingen**: laat weten wanneer er geen geldige woorden meer zijn voor de huidige letter.
+- **Rondebeheer**: houdt score en langste woord per ronde bij en herstelt de woordlijst met één toets.
+- **Overlay-bediening**: blijft boven andere vensters, is versleepbaar en kan via sneltoetsen worden getoond of verborgen.
 
+## Sneltoetsen
+- **F7** – Overlay tonen of verbergen.
+- **F6** – Nieuwe ronde starten (score resetten en woordlijst terugzetten).
+- **F8** – Afsluiten.
+- **Enter** – Huidige invoer indienen en de volgende laatste letter opslaan.
+- **Backspace** – Laatste teken verwijderen.
 
-## About
+## Uitvoeren vanaf broncode
+Zorg dat Python 3 en de afhankelijkheden zijn geïnstalleerd (PyQt5 en pynput). Start daarna de overlay:
 
-WordBomb Typing Overlay is a helpful tool for the Roblox game **WordBomb**. It provides word suggestions as you type, with visual highlights and a subtle animation.  
+```bash
+python wordbomb_typing_overlay.py
+```
 
-(I reached round 99 300 turns with this, you can easily reach much higher.)
-
-The tool is built using **Python**, and is provided as a ready-to-use **EXE**.
-
----
-
-## Download and Use
-
-The easiest way to use the overlay is via the **exe**:
-
-1. Go to the [Releases page](https://github.com/thijsvndmeer/Word-Bomb-Helper/releases).  
-2. Download the latest `WordBombHelper.exe`.  
-3. Double-click the exe to launch the overlay.  
-
-> The overlay always stays on top of other windows and shows suggestions based on what you type.  
-> - **F7:** hide/show overlay  
-> - **F8:** quit  
-> - **Enter:** reset typed buffer
-
----
+Het venster opent direct en begint met luisteren naar toetsenbordinvoer. Typ of plak geen cijfers of speciale tekens; die worden genegeerd om de invoer schoon te houden.

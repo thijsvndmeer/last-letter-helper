@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-WordBomb Typing Overlay with improved TAB autocomplete behavior
-- TAB hint hidden when the buffer already equals the longest suggestion
-- Enter cancels an in-progress autocomplete
-- Autocomplete runs 1.5x faster than the previous version (~66.7ms mean per char)
-- Submitted words are removed from the suggester so they won't be suggested again
-- Panic button (`) behavior included
+Last-Letter Helper overlay
+
+This version focuses on the "last letter" word game flow instead of WordBomb.
+It keeps the overlay lightweight: no panic button, no automatic typing, just
+live suggestions that respect the last letter of the previously submitted word.
 """
 
 import sys, re, os, random, math
@@ -38,27 +37,48 @@ def load_wordlist():
 
 class WordSuggester:
     def __init__(self, words):
-        self._set = set(words)
+        self.original_set = set(words)
+        self.reset_round()
+
+    def reset_round(self):
+        self._set = set(self.original_set)
         self._list = sorted(self._set)
 
-    def suggest(self, letters, limit=5):
-        if letters is None:
-            letters = ""
-        if not letters:
-            return [], True
-        results = [w for w in self._list if w.startswith(letters)]
-        prefix_mode = True
-        if not results:
-            results = [w for w in self._list if letters in w]
-            prefix_mode = False
-        results_sorted = sorted(results, key=lambda x: (len(x), x))
-        if results_sorted:
-            longest_word = max(results, key=len)
-            if longest_word not in results_sorted[:limit]:
-                results_sorted = results_sorted[:max(0, limit-1)] + [longest_word]
+    @staticmethod
+    def _difficulty_score(word: str) -> int:
+        uncommon = set("jqxzv")
+        return sum(1 for c in word if c in uncommon)
+
+    def suggest(self, required_letter: str, letters: str, limit=5, used=None):
+        if used is None:
+            used = set()
+        letters = letters or ""
+
+        # Ensure we always respect the last-letter rule.
+        if required_letter:
+            if letters.startswith(required_letter):
+                prefix = letters
             else:
-                results_sorted = results_sorted[:limit]
-        return results_sorted, prefix_mode
+                prefix = required_letter + letters
+        else:
+            prefix = letters
+
+        prefix_results = [w for w in self._list
+                          if w.startswith(prefix)
+                          and w not in used]
+        prefix_mode = True
+
+        # If nothing matches the current buffer, fall back to the required letter only
+        # so the player always sees at least one valid option when it exists.
+        if not prefix_results and required_letter:
+            prefix_mode = False
+            prefix_results = [w for w in self._list
+                              if w.startswith(required_letter)
+                              and w not in used]
+
+        results_sorted = sorted(prefix_results,
+                                key=lambda x: (len(x), self._difficulty_score(x), x))
+        return results_sorted[:limit], prefix_mode
 
     def remove_word(self, word):
         word = word.lower()
@@ -238,29 +258,19 @@ class GlowFrame(QtWidgets.QFrame):
 
 class TypingOverlay(QtWidgets.QWidget):
     update_signal = QtCore.pyqtSignal(str)
-    autocomplete_signal = QtCore.pyqtSignal(str)
-    cancel_signal = QtCore.pyqtSignal()
 
     def __init__(self,suggester):
         super().__init__()
         self.suggester = suggester
         self.buffer = ""
-        self.high_score = 0
+        self.words_found = 0
+        self.longest_word = 0
+        self.used_words = set()
+        self.required_letter = None
         self.hidden_mode = False
-        self.autocomplete_in_progress = False
-        self.autocomplete_timers = []
-        self.ignore_synthetic = False
-        self.expected_synthetic = 0
         self.kcontroller = KController()
-        self.MEAN_MS = 100.0
-        self.SD_MS = 50.0
-        self.MIN_MS = 40
-        self.MAX_MS = 300
-        self.KEY_DOWN_MS = 8
         self._build_ui()
         self.update_signal.connect(self.on_update_signal)
-        self.autocomplete_signal.connect(self.start_autocomplete)
-        self.cancel_signal.connect(self.cancel_autocomplete)
         self.show()
 
     # -------------------- _build_ui --------------------
@@ -271,18 +281,26 @@ class TypingOverlay(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self.container)
         layout.setContentsMargins(18,18,18,18)
         layout.setSpacing(4)
-        self.header_label = QtWidgets.QLabel("Word Bomb Helper by xHondje")
+        self.header_label = QtWidgets.QLabel("Last-Letter Helper")
         font_header = QtGui.QFont("Segoe UI",12,QtGui.QFont.Bold)
         self.header_label.setFont(font_header)
         self.header_label.setStyleSheet("color:#00ff88; background: transparent;")
         self.header_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(self.header_label)
-        self.length_label = QtWidgets.QLabel("")
-        font_length = QtGui.QFont("Segoe UI",12,QtGui.QFont.Bold)
-        self.length_label.setFont(font_length)
-        self.length_label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
-        self.length_label.setStyleSheet("color:#ffaa00; background: transparent;")
-        layout.addWidget(self.length_label)
+        stats_layout = QtWidgets.QHBoxLayout()
+        self.required_label = QtWidgets.QLabel("Last letter: ?")
+        self.required_label.setStyleSheet("color:#ffaa00; background: transparent;")
+        font_required = QtGui.QFont("Segoe UI",11,QtGui.QFont.Bold)
+        self.required_label.setFont(font_required)
+        stats_layout.addWidget(self.required_label)
+
+        self.score_label = QtWidgets.QLabel("Score: 0 | Langste: 0")
+        self.score_label.setStyleSheet("color:#ffaa00; background: transparent;")
+        self.score_label.setFont(font_required)
+        self.score_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignTop)
+        stats_layout.addWidget(self.score_label)
+        layout.addLayout(stats_layout)
+
         self.buffer_label = QtWidgets.QLabel("typed: (empty)")
         font = QtGui.QFont("Segoe UI",18,QtGui.QFont.Bold)
         self.buffer_label.setFont(font)
@@ -302,13 +320,7 @@ class TypingOverlay(QtWidgets.QWidget):
         self.next_letter_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignBottom)
         self.next_letter_label.setStyleSheet("color:#ffaa00; background: transparent;")
         layout.addWidget(self.next_letter_label)
-        self.highscore_label = QtWidgets.QLabel(f"High Score: {self.high_score}")
-        font_hs = QtGui.QFont("Segoe UI",12,QtGui.QFont.Bold)
-        self.highscore_label.setFont(font_hs)
-        self.highscore_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignTop)
-        self.highscore_label.setStyleSheet("color:#ffaa00; background: transparent;")
-        layout.addWidget(self.highscore_label)
-        self.status_label = QtWidgets.QLabel("F7: hide/show | F8: quit | Enter: submit/reset |  `: panic")
+        self.status_label = QtWidgets.QLabel("F7: hide/show | F6: new round | F8: quit | Enter: submit/reset")
         self.status_label.setStyleSheet("color:#888; font-size:11px; font-family:'Segoe UI'; background: transparent;")
         layout.addWidget(self.status_label)
         self.setFixedSize(OVERLAY_WIDTH, OVERLAY_HEIGHT)
@@ -332,236 +344,89 @@ class TypingOverlay(QtWidgets.QWidget):
     def on_update_signal(self,key_char):
         if not self.isVisible(): return
 
-        if key_char == "ENTER" and self.autocomplete_in_progress:
-            self.cancel_autocomplete()
-            return
-
         if key_char=="BACKSPACE":
             self.buffer = self.buffer[:-1]
         elif key_char=="ENTER":
-            self.update_ui()  # <--- move this first
-            if self.buffer.lower() in self.suggester._set:
-                self.high_score = max(self.high_score,len(self.buffer))
-                self.highscore_label.setText(f"High Score: {self.high_score}")
-                self.suggester.remove_word(self.buffer.lower())
+            submitted = self.buffer.lower()
+            if submitted.isalpha() and submitted:
+                self.used_words.add(submitted)
+                self.suggester.remove_word(submitted)
+                self.words_found += 1
+                self.longest_word = max(self.longest_word, len(submitted))
+                self.required_letter = submitted[-1]
             self.buffer = ""
-        elif key_char=="`":  # panic button
-            self.panic_complete()
-            return
         else:
-            self.buffer += key_char.lower()
+            if re.match(r"[a-z]", key_char):
+                self.buffer += key_char.lower()
         self.update_ui()
 
     # -------------------- update UI --------------------
     def update_ui(self):
         self.buffer_label.setText(f"typed: {self.buffer or '(empty)'}")
-        suggestions, prefix_mode = self.suggester.suggest(self.buffer.lower(), SUGGESTION_COUNT)
+        suggestions, prefix_mode = self.suggester.suggest(self.required_letter, self.buffer.lower(), SUGGESTION_COUNT, self.used_words)
+        best_word = suggestions[0] if suggestions else None
         self.container.contains_mode = not prefix_mode
-        self.container.word_length = len(self.buffer)
+        self.container.word_length = len(best_word) if best_word else len(self.buffer)
         self.container.ready_for_fire = bool(suggestions)
-        self.length_label.setText(f"Length: {len(self.buffer)}")
+
+        self.required_label.setText(f"Last letter: {self.required_letter or '?'}")
+        self.score_label.setText(f"Score: {self.words_found} | Langste: {self.longest_word}")
 
         # next letter hint
-        if not suggestions:
-            next_hint = "BACKSPACE" if not prefix_mode else ""
+        typed_word = self.buffer.lower()
+        if self.required_letter and typed_word and not typed_word.startswith(self.required_letter):
+            next_hint = f"Start met '{self.required_letter}'"
+            self.next_letter_label.setStyleSheet("color:#ff5555; background: transparent;")
+        elif not suggestions and self.required_letter:
+            next_hint = "Geen woorden meer"
+            self.next_letter_label.setStyleSheet("color:#ff5555; background: transparent;")
+        elif not suggestions:
+            next_hint = "Type om te starten"
+            self.next_letter_label.setStyleSheet("color:#ffaa00; background: transparent;")
         else:
-            longest_word = max(suggestions,key=len)
-            if self.buffer.lower() == longest_word.lower():
-                next_hint = "Longest word possible typed"
-                self.next_letter_label.setStyleSheet("color:#ffaa00; background: transparent;")
-            elif not prefix_mode:
-                next_hint = "BACKSPACE"
-                self.next_letter_label.setStyleSheet("color:#3399ff; background: transparent;")
+            if len(typed_word) < len(best_word):
+                next_hint = best_word[len(typed_word)]
             else:
-                next_hint = longest_word[len(self.buffer)]
-                self.next_letter_label.setStyleSheet("color:#00ff88; background: transparent;")
+                next_hint = "Druk op Enter"
+            self.next_letter_label.setStyleSheet("color:#00ff88; background: transparent;")
         self.next_letter_label.setText(next_hint)
 
         # suggestions display
         colored_words = []
-        longest_word = max(suggestions,key=len) if suggestions else None
         for word in suggestions:
             colored = ""
             for i,c in enumerate(word):
-                if prefix_mode and i<len(self.buffer):
+                if i < len(typed_word) and word.startswith(typed_word):
                     colored += f"<span style='color:#00ff88; font-weight:700'>{c}</span>"
-                elif not prefix_mode and self.buffer.lower() in word.lower() and c.lower() in self.buffer.lower():
+                elif typed_word and typed_word in word and c.lower() in typed_word:
                     colored += f"<span style='color:#3399ff; font-weight:700'>{c}</span>"
+                elif self.required_letter and i == 0 and c.lower() == self.required_letter:
+                    colored += f"<span style='color:#ffaa00; font-weight:700'>{c}</span>"
                 else:
                     colored += f"<span style='color:#ff5555'>{c}</span>"
-            show_tab_hint = (longest_word is not None and word==longest_word and prefix_mode
-                             and (self.buffer.lower()!=longest_word.lower())
-                             and (not self.autocomplete_in_progress))
-            if show_tab_hint:
-                colored += " <span style='color:#aaaaaa; font-size:11px'>&nbsp;&nbsp;(TAB to auto-complete)</span>"
+            if word == best_word:
+                colored = f"<span style='background-color:rgba(255,215,0,0.12); padding:2px 4px;'>{colored}</span>"
             colored_words.append(colored)
+        warning_suffix = " | Geen geldige woorden meer" if (self.required_letter and not colored_words) else ""
+        self.status_label.setText(f"F7: hide/show | F6: new round | F8: quit | Enter: submit/reset{warning_suffix}")
         self.suggest_label.setText("<span style='color:#ffffff'>no matches</span>" if not colored_words else "<br>".join(colored_words))
 
         # glow
-        self.container.set_glow(bool(self.buffer and (self.buffer in self.suggester._set)))
-
-    # -------------------- panic logic --------------------
-    def panic_complete(self):
-        # do nothing if there's nothing typed (no visual change)
-        if not self.buffer:
-            return
-
-        # cancel any running autocomplete to avoid timer collisions
-        try:
-            self.cancel_autocomplete()
-        except Exception:
-            pass
-
-        orig_buffer = self.buffer
-
-        # choose a target word: prefer suggestions for current buffer,
-        # fallback to prefix-of-3, then to first available word in list.
-        suggestions, prefix_mode = self.suggester.suggest(orig_buffer.lower(), 100)
-        if suggestions:
-            target_word = suggestions[0]
-        else:
-            prefix = orig_buffer[:3]
-            suggestions2, _ = self.suggester.suggest(prefix.lower(), 100)
-            if suggestions2:
-                target_word = suggestions2[0]
-            elif self.suggester._list:
-                target_word = self.suggester._list[0]
-            else:
-                return  # nothing to type
-
-        # Decide whether we can finish the current buffer (no erasing) or must
-        # erase and type from scratch.
-        can_finish = target_word.startswith(orig_buffer)
-
-        # Activate panic visuals and synthetic handling
-        self.container.panicking = True
-        self.autocomplete_timers = []
-        self.autocomplete_in_progress = True
-
-        if can_finish:
-            chars_to_type = list(target_word[len(orig_buffer):])
-            backspaces = 0
-        else:
-            chars_to_type = list(target_word)  # type whole word after erasing
-            backspaces = len(orig_buffer)
-
-        # total synthetic events we'll emit: backspaces + chars + final ENTER
-        total_synthetic = backspaces + len(chars_to_type) + 1
-        self.expected_synthetic = total_synthetic
-        self.ignore_synthetic = True
-
-        cumulative_ms = 0
-
-        # helper: scheduled backspace
-        def make_timer_for_backspace():
-            t = QtCore.QTimer(self)
-            t.setSingleShot(True)
-            def on_timeout():
-                try:
-                    self.kcontroller.press(keyboard.Key.backspace)
-                    release_timer = QtCore.QTimer(self)
-                    release_timer.setSingleShot(True)
-                    release_timer.timeout.connect(lambda: self.kcontroller.release(keyboard.Key.backspace))
-                    release_timer.start(self.KEY_DOWN_MS)
-                except Exception as e:
-                    print("Controller send error (panic backspace):", e)
-                # notify overlay as if Backspace pressed
-                self.update_signal.emit("BACKSPACE")
-            t.timeout.connect(on_timeout)
-            return t
-
-        # helper: scheduled character
-        def make_timer_for_char(ch):
-            t = QtCore.QTimer(self)
-            t.setSingleShot(True)
-            def on_timeout(ch=ch):
-                try:
-                    self.kcontroller.press(ch)
-                    release_timer = QtCore.QTimer(self)
-                    release_timer.setSingleShot(True)
-                    release_timer.timeout.connect(lambda ch=ch: self.kcontroller.release(ch))
-                    release_timer.start(self.KEY_DOWN_MS)
-                except Exception as e:
-                    print("Controller send error (panic char):", e)
-                self.update_signal.emit(ch)
-            t.timeout.connect(on_timeout)
-            return t
-
-        # helper: scheduled ENTER (uses update_signal so submit logic runs normally)
-        # helper: scheduled ENTER (physical press/release only; do NOT emit update_signal here)
-        def make_timer_for_enter():
-            t = QtCore.QTimer(self)
-            t.setSingleShot(True)
-            def on_timeout():
-                try:
-                    # physical press/release only
-                    self.kcontroller.press(keyboard.Key.enter)
-                    release_timer = QtCore.QTimer(self)
-                    release_timer.setSingleShot(True)
-                    release_timer.timeout.connect(lambda: self.kcontroller.release(keyboard.Key.enter))
-                    release_timer.start(self.KEY_DOWN_MS)
-                except Exception as e:
-                    print("Controller send error (panic enter):", e)
-                # IMPORTANT: do NOT call self.update_signal.emit("ENTER") here;
-                # we'll trigger normal handling after synthetic-ignore is cleared.
-            t.timeout.connect(on_timeout)
-            return t
-
-
-        # Schedule backspaces (if needed). Use a slightly faster cadence for panic backspaces.
-        for _ in range(backspaces):
-            delay = int(max(self.MIN_MS, min(self.MAX_MS,
-                                            random.gauss(self.MEAN_MS * 0.5, self.SD_MS))))
-            cumulative_ms += delay
-            t_bs = make_timer_for_backspace()
-            t_bs.start(cumulative_ms)
-            self.autocomplete_timers.append(t_bs)
-
-        # Schedule typing the characters using a faster mean (panic = faster)
-        for ch in chars_to_type:
-            delay = int(max(self.MIN_MS, min(self.MAX_MS,
-                                            random.gauss(self.MEAN_MS * 0.5, self.SD_MS))))
-            cumulative_ms += delay
-            t_ch = make_timer_for_char(ch)
-            t_ch.start(cumulative_ms)
-            self.autocomplete_timers.append(t_ch)
-
-        # Schedule final ENTER to submit the typed word (so suggester.remove_word runs)
-        final_delay = int(max(self.MIN_MS, min(self.MAX_MS,
-                                              random.gauss(self.MEAN_MS * 0.6, self.SD_MS))))
-        cumulative_ms += final_delay
-        t_enter = make_timer_for_enter()
-        t_enter.start(cumulative_ms)
-        self.autocomplete_timers.append(t_enter)
-
-        # Cleanup timer: clear flags and visuals once all scheduled events are done
-        fin = QtCore.QTimer(self)
-        fin.setSingleShot(True)
-        def finish_panic():
-            # clear timers tracking
-            self.autocomplete_timers = []
-            self.autocomplete_in_progress = False
-            self.ignore_synthetic = False
-            self.expected_synthetic = 0
-            self.container.panicking = False
-            # the final ENTER has already triggered on_update_signal which clears buffer if the word
-            # was in suggester; ensure UI is consistent
-            self.update_ui()
-            QtCore.QTimer.singleShot(20, lambda: self.handle_key(keyboard.Key.enter))
-        fin.timeout.connect(finish_panic)
-        fin.start(cumulative_ms + 120)
-
+        self.container.set_glow(bool(best_word))
 
     # -------------------- global key handler --------------------
+    def start_new_round(self):
+        self.suggester.reset_round()
+        self.used_words = set()
+        self.words_found = 0
+        self.longest_word = 0
+        self.required_letter = None
+        self.buffer = ""
+        self.update_ui()
+
     def handle_key(self,key):
         try:
-            if self.ignore_synthetic and self.expected_synthetic > 0:
-                self.expected_synthetic -= 1
-                if self.expected_synthetic <= 0:
-                    self.ignore_synthetic = False
-                return
-
-            if hasattr(key,'char') and key.char and re.match(r"[a-zA-Z`]",key.char):
+            if hasattr(key,'char') and key.char and re.match(r"[a-zA-Z]",key.char):
                 self.update_signal.emit(key.char)
             elif key==keyboard.Key.backspace:
                 self.update_signal.emit("BACKSPACE")
@@ -572,69 +437,10 @@ class TypingOverlay(QtWidgets.QWidget):
             elif key==keyboard.Key.f7:
                 self.hidden_mode = not self.hidden_mode
                 self.setVisible(not self.hidden_mode)
-            elif key==keyboard.Key.tab:
-                suggestions, prefix_mode = self.suggester.suggest(self.buffer.lower(), SUGGESTION_COUNT)
-                if suggestions and prefix_mode:
-                    longest_word = max(suggestions,key=len)
-                    if self.buffer.lower()!=longest_word.lower():
-                        self.autocomplete_signal.emit(longest_word)
+            elif key==keyboard.Key.f6:
+                self.start_new_round()
         except Exception as e:
             print("Key handling error:",e)
-
-    # -------------------- autocomplete --------------------
-    @QtCore.pyqtSlot()
-    def cancel_autocomplete(self):
-        if not self.autocomplete_in_progress: return
-        for t in self.autocomplete_timers:
-            try: t.stop()
-            except Exception: pass
-        self.autocomplete_timers = []
-        self.autocomplete_in_progress = False
-        self.ignore_synthetic = False
-        self.expected_synthetic = 0
-
-    @QtCore.pyqtSlot(str)
-    def start_autocomplete(self, target_word: str):
-        if self.autocomplete_in_progress: return
-        cur = self.buffer
-        if not target_word.startswith(cur): return
-        remaining = target_word[len(cur):]
-        if not remaining: return
-        self.autocomplete_in_progress = True
-        self.autocomplete_timers = []
-        self.expected_synthetic = len(remaining)
-        self.ignore_synthetic = True
-        cumulative_ms = 0
-
-        def make_timer_for_char(ch):
-            t = QtCore.QTimer(self)
-            t.setSingleShot(True)
-            def on_timeout():
-                try:
-                    self.kcontroller.press(ch)
-                    release_timer = QtCore.QTimer(self)
-                    release_timer.setSingleShot(True)
-                    release_timer.timeout.connect(lambda: self.kcontroller.release(ch))
-                    release_timer.start(self.KEY_DOWN_MS)
-                except Exception as e: print("Controller send error:", e)
-                self.update_signal.emit(ch)
-            t.timeout.connect(on_timeout)
-            return t
-
-        for ch in remaining:
-            delay = int(max(self.MIN_MS, min(self.MAX_MS, random.gauss(self.MEAN_MS, self.SD_MS))))
-            cumulative_ms += delay
-            t = make_timer_for_char(ch)
-            t.start(cumulative_ms)
-            self.autocomplete_timers.append(t)
-
-        fin = QtCore.QTimer(self)
-        fin.setSingleShot(True)
-        fin.timeout.connect(lambda: (setattr(self,"autocomplete_timers",[]),
-                                     setattr(self,"autocomplete_in_progress",False),
-                                     setattr(self,"ignore_synthetic",False),
-                                     setattr(self,"expected_synthetic",0)))
-        fin.start(cumulative_ms + 40)
 
 # -------------------- main --------------------
 def main():

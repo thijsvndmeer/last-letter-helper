@@ -368,10 +368,9 @@ class TypingOverlay(QtWidgets.QWidget):
                 self.longest_word = max(self.longest_word, len(submitted))
                 
                 # --- New suffix-based chaining logic ---
-                # Strip the currently required letters from the front of the submitted word
-                # and use the last up-to-3 remaining letters as the next required prefix.
-                remainder = submitted[len(self.required_letter):] if self.required_letter else submitted
-                next_prefix = remainder[-3:] if remainder else ""
+                # Use the last up-to-3 letters of the submitted word for the next required prefix,
+                # even if they overlap with the previously required letters (e.g., "sid" -> "sides" -> "des").
+                next_prefix = submitted[-3:] if submitted else ""
 
                 self.required_letter = next_prefix
                 self.buffer = self.required_letter if self.required_letter else ""

@@ -49,6 +49,9 @@ class WordSuggester:
         uncommon = set("jqxzv")
         return sum(1 for c in word if c in uncommon)
 
+    def is_word(self, word):
+        return word in self.original_set
+
     def suggest(self, required_letter: str, letters: str, limit=5, used=None):
         if used is None:
             used = set()
@@ -288,7 +291,7 @@ class TypingOverlay(QtWidgets.QWidget):
         self.header_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(self.header_label)
         stats_layout = QtWidgets.QHBoxLayout()
-        self.required_label = QtWidgets.QLabel("Last letter: ?")
+        self.required_label = QtWidgets.QLabel("Last letters: ?")
         self.required_label.setStyleSheet("color:#ffaa00; background: transparent;")
         font_required = QtGui.QFont("Segoe UI",11,QtGui.QFont.Bold)
         self.required_label.setFont(font_required)
@@ -345,16 +348,39 @@ class TypingOverlay(QtWidgets.QWidget):
         if not self.isVisible(): return
 
         if key_char=="BACKSPACE":
+            # Prevent backspace from deleting the required letter if it's the only one
+            if self.buffer == self.required_letter:
+                return
             self.buffer = self.buffer[:-1]
         elif key_char=="ENTER":
             submitted = self.buffer.lower()
             if submitted.isalpha() and submitted:
+                # Basic check to ensure the word follows the rule, if a rule is active
+                if self.required_letter and not submitted.startswith(self.required_letter):
+                    # Invalid word, don't accept it, just reset buffer to the required letter
+                    self.buffer = self.required_letter
+                    self.update_ui()
+                    return
+
                 self.used_words.add(submitted)
                 self.suggester.remove_word(submitted)
                 self.words_found += 1
                 self.longest_word = max(self.longest_word, len(submitted))
-                self.required_letter = submitted[-1]
-            self.buffer = ""
+                
+                # --- New prefix logic starts here ---
+                next_prefix = ""
+                # Find the longest proper suffix (max length 3) that is a word.
+                for length in range(min(len(submitted) - 1, 3), 0, -1):
+                    suffix = submitted[-length:]
+                    if self.suggester.is_word(suffix):
+                        next_prefix = suffix
+                        break # Found the longest valid one, so we can stop.
+
+                self.required_letter = next_prefix
+                self.buffer = self.required_letter if self.required_letter else ""
+            else:
+                # If enter is pressed on empty/invalid string, reset buffer to required letter
+                self.buffer = self.required_letter if self.required_letter else ""
         else:
             if re.match(r"[a-z]", key_char):
                 self.buffer += key_char.lower()
@@ -369,7 +395,7 @@ class TypingOverlay(QtWidgets.QWidget):
         self.container.word_length = len(best_word) if best_word else len(self.buffer)
         self.container.ready_for_fire = bool(suggestions)
 
-        self.required_label.setText(f"Last letter: {self.required_letter or '?'}")
+        self.required_label.setText(f"Last letters: {self.required_letter or '?'}")
         self.score_label.setText(f"Score: {self.words_found} | Langste: {self.longest_word}")
 
         # next letter hint

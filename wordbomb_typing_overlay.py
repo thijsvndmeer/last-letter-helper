@@ -49,18 +49,17 @@ class WordSuggester:
         uncommon = set("jqxzv")
         return sum(1 for c in word if c in uncommon)
 
-    def suggest(self, required_prefix: str, letters: str, limit=5, used=None):
+    def suggest(self, required_letter: str, letters: str, limit=5, used=None):
         if used is None:
             used = set()
         letters = letters or ""
-        required_prefix = required_prefix or ""
 
         # Ensure we always respect the last-letter rule.
-        if required_prefix:
-            if letters.startswith(required_prefix):
+        if required_letter:
+            if letters.startswith(required_letter):
                 prefix = letters
             else:
-                prefix = required_prefix + letters
+                prefix = required_letter + letters
         else:
             prefix = letters
 
@@ -71,10 +70,10 @@ class WordSuggester:
 
         # If nothing matches the current buffer, fall back to the required letter only
         # so the player always sees at least one valid option when it exists.
-        if not prefix_results and required_prefix:
+        if not prefix_results and required_letter:
             prefix_mode = False
             prefix_results = [w for w in self._list
-                              if w.startswith(required_prefix)
+                              if w.startswith(required_letter)
                               and w not in used]
 
         results_sorted = sorted(prefix_results,
@@ -267,7 +266,7 @@ class TypingOverlay(QtWidgets.QWidget):
         self.words_found = 0
         self.longest_word = 0
         self.used_words = set()
-        self.required_prefix = None
+        self.required_letter = None
         self.hidden_mode = False
         self.kcontroller = KController()
         self._build_ui()
@@ -289,7 +288,7 @@ class TypingOverlay(QtWidgets.QWidget):
         self.header_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(self.header_label)
         stats_layout = QtWidgets.QHBoxLayout()
-        self.required_label = QtWidgets.QLabel("Start letters: ?")
+        self.required_label = QtWidgets.QLabel("Last letter: ?")
         self.required_label.setStyleSheet("color:#ffaa00; background: transparent;")
         font_required = QtGui.QFont("Segoe UI",11,QtGui.QFont.Bold)
         self.required_label.setFont(font_required)
@@ -354,13 +353,8 @@ class TypingOverlay(QtWidgets.QWidget):
                 self.suggester.remove_word(submitted)
                 self.words_found += 1
                 self.longest_word = max(self.longest_word, len(submitted))
-                if len(submitted) >= 2:
-                    self.required_prefix = submitted[-2:]
-                else:
-                    self.required_prefix = submitted[-1]
-                self.buffer = self.required_prefix
-            else:
-                self.buffer = ""
+                self.required_letter = submitted[-1]
+            self.buffer = ""
         else:
             if re.match(r"[a-z]", key_char):
                 self.buffer += key_char.lower()
@@ -369,21 +363,21 @@ class TypingOverlay(QtWidgets.QWidget):
     # -------------------- update UI --------------------
     def update_ui(self):
         self.buffer_label.setText(f"typed: {self.buffer or '(empty)'}")
-        suggestions, prefix_mode = self.suggester.suggest(self.required_prefix, self.buffer.lower(), SUGGESTION_COUNT, self.used_words)
+        suggestions, prefix_mode = self.suggester.suggest(self.required_letter, self.buffer.lower(), SUGGESTION_COUNT, self.used_words)
         best_word = suggestions[0] if suggestions else None
         self.container.contains_mode = not prefix_mode
         self.container.word_length = len(best_word) if best_word else len(self.buffer)
         self.container.ready_for_fire = bool(suggestions)
 
-        self.required_label.setText(f"Start letters: {self.required_prefix or '?'}")
+        self.required_label.setText(f"Last letter: {self.required_letter or '?'}")
         self.score_label.setText(f"Score: {self.words_found} | Langste: {self.longest_word}")
 
         # next letter hint
         typed_word = self.buffer.lower()
-        if self.required_prefix and typed_word and not typed_word.startswith(self.required_prefix):
-            next_hint = f"Start met '{self.required_prefix}'"
+        if self.required_letter and typed_word and not typed_word.startswith(self.required_letter):
+            next_hint = f"Start met '{self.required_letter}'"
             self.next_letter_label.setStyleSheet("color:#ff5555; background: transparent;")
-        elif not suggestions and self.required_prefix:
+        elif not suggestions and self.required_letter:
             next_hint = "Geen woorden meer"
             self.next_letter_label.setStyleSheet("color:#ff5555; background: transparent;")
         elif not suggestions:
@@ -406,14 +400,14 @@ class TypingOverlay(QtWidgets.QWidget):
                     colored += f"<span style='color:#00ff88; font-weight:700'>{c}</span>"
                 elif typed_word and typed_word in word and c.lower() in typed_word:
                     colored += f"<span style='color:#3399ff; font-weight:700'>{c}</span>"
-                elif self.required_prefix and i < len(self.required_prefix) and c.lower() == self.required_prefix[i]:
+                elif self.required_letter and i == 0 and c.lower() == self.required_letter:
                     colored += f"<span style='color:#ffaa00; font-weight:700'>{c}</span>"
                 else:
                     colored += f"<span style='color:#ff5555'>{c}</span>"
             if word == best_word:
                 colored = f"<span style='background-color:rgba(255,215,0,0.12); padding:2px 4px;'>{colored}</span>"
             colored_words.append(colored)
-        warning_suffix = " | Geen geldige woorden meer" if (self.required_prefix and not colored_words) else ""
+        warning_suffix = " | Geen geldige woorden meer" if (self.required_letter and not colored_words) else ""
         self.status_label.setText(f"F7: hide/show | F6: new round | F8: quit | Enter: submit/reset{warning_suffix}")
         self.suggest_label.setText("<span style='color:#ffffff'>no matches</span>" if not colored_words else "<br>".join(colored_words))
 
@@ -426,7 +420,7 @@ class TypingOverlay(QtWidgets.QWidget):
         self.used_words = set()
         self.words_found = 0
         self.longest_word = 0
-        self.required_prefix = None
+        self.required_letter = None
         self.buffer = ""
         self.update_ui()
 

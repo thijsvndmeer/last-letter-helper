@@ -3,8 +3,8 @@
 Een compacte overlay die helpt bij het bekende "laatste letter"-woordspel. De tool kijkt naar de laatste letter van het vorige ingezonden woord en stelt meerdere korte suggesties voor die met die letter beginnen. De overlay blijft altijd bovenaan, kan met de muis versleept worden en werkt zowel met het meegeleverde `words_alpha.txt` bestand als met een externe systeem-woordenlijst.
 
 ## Belangrijkste functies
-- **Automatisch startstuk**: na het indienen van een woord worden de laatste twee letters direct in het invoerveld gezet. Je hoeft ze dus niet handmatig te typen voor de volgende beurt.
-- **Slimme suggesties**: altijd tot vijf opties die beginnen met het juiste startstuk, geordend van kort naar lang en zeldzame letters laag in de lijst. Reeds gebruikte woorden worden overgeslagen.
+- **Laatste letter als input**: na het indienen van een woord wordt de laatste letter automatisch opgeslagen voor de volgende ronde.
+- **Slimme suggesties**: altijd tot vijf opties die beginnen met de juiste letter, geordend van kort naar lang en zeldzame letters laag in de lijst. Reeds gebruikte woorden worden overgeslagen.
 - **Live feedback**: toont wat je typt, markeert prefix- en binnenwoordmatches met kleur, en laat de volgende letter van de beste suggestie zien.
 - **Waarschuwingen**: laat weten wanneer er geen geldige woorden meer zijn voor de huidige letter.
 - **Rondebeheer**: houdt score en langste woord per ronde bij en herstelt de woordlijst met één toets.

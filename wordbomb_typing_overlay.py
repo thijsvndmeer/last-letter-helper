@@ -367,14 +367,11 @@ class TypingOverlay(QtWidgets.QWidget):
                 self.words_found += 1
                 self.longest_word = max(self.longest_word, len(submitted))
                 
-                # --- New prefix logic starts here ---
-                next_prefix = ""
-                # Find the longest proper suffix (max length 3) that is a word.
-                for length in range(min(len(submitted) - 1, 3), 0, -1):
-                    suffix = submitted[-length:]
-                    if self.suggester.is_word(suffix):
-                        next_prefix = suffix
-                        break # Found the longest valid one, so we can stop.
+                # --- New suffix-based chaining logic ---
+                # Strip the currently required letters from the front of the submitted word
+                # and use the last up-to-3 remaining letters as the next required prefix.
+                remainder = submitted[len(self.required_letter):] if self.required_letter else submitted
+                next_prefix = remainder[-3:] if remainder else ""
 
                 self.required_letter = next_prefix
                 self.buffer = self.required_letter if self.required_letter else ""

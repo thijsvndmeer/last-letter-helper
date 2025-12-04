@@ -385,8 +385,45 @@ class TypingOverlay(QtWidgets.QWidget):
 
     # -------------------- update UI --------------------
     def update_ui(self):
+        fallback_notice = ""
+
+        def prepare_suggestions():
+            nonlocal fallback_notice
+
+            initial_required = self.required_letter or ""
+            attempt_required = initial_required
+            typed_word = self.buffer.lower()
+            attempt_buffer = typed_word
+
+            # If a long suffix was chosen by the game but yields nothing, gradually trim
+            # to a shorter suffix so the user keeps seeing useful results.
+            while True:
+                suggestions, prefix_mode = self.suggester.suggest(
+                    attempt_required, attempt_buffer, SUGGESTION_COUNT, self.used_words)
+                if suggestions or not attempt_required:
+                    return suggestions, prefix_mode, attempt_required, attempt_buffer
+
+                shortened_required = attempt_required[1:]
+                shown_suffix = shortened_required or "geen specifieke"
+                fallback_notice = (
+                    f"Geen matches voor '{attempt_required}'. Overschakelen naar suffix {shown_suffix}.")
+
+                # If the buffer started with the old required suffix, trim the visible text too
+                if typed_word.startswith(initial_required):
+                    drop = len(attempt_required) - len(shortened_required)
+                    attempt_buffer = typed_word[drop:]
+                else:
+                    attempt_buffer = shortened_required
+                attempt_required = shortened_required
+
+        suggestions, prefix_mode, final_required, final_buffer = prepare_suggestions()
+
+        # Align internal state if we had to relax the suffix requirement
+        if final_required != (self.required_letter or ""):
+            self.required_letter = final_required
+            self.buffer = final_buffer
+
         self.buffer_label.setText(f"typed: {self.buffer or '(empty)'}")
-        suggestions, prefix_mode = self.suggester.suggest(self.required_letter, self.buffer.lower(), SUGGESTION_COUNT, self.used_words)
         best_word = suggestions[0] if suggestions else None
         self.container.contains_mode = not prefix_mode
         self.container.word_length = len(best_word) if best_word else len(self.buffer)
@@ -431,7 +468,9 @@ class TypingOverlay(QtWidgets.QWidget):
                 colored = f"<span style='background-color:rgba(255,215,0,0.12); padding:2px 4px;'>{colored}</span>"
             colored_words.append(colored)
         warning_suffix = " | Geen geldige woorden meer" if (self.required_letter and not colored_words) else ""
-        self.status_label.setText(f"F7: hide/show | F6: new round | F8: quit | Enter: submit/reset{warning_suffix}")
+        fallback_suffix = f" | {fallback_notice}" if fallback_notice else ""
+        self.status_label.setText(
+            f"F7: hide/show | F6: new round | F8: quit | Enter: submit/reset{warning_suffix}{fallback_suffix}")
         self.suggest_label.setText("<span style='color:#ffffff'>no matches</span>" if not colored_words else "<br>".join(colored_words))
 
         # glow
